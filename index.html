@@ -114,7 +114,19 @@
     .theme-opt { flex:1; padding:10px; text-align:center; background:var(--tab-bg); border-radius:10px; cursor:pointer; font-size:13px; font-weight:bold; color:var(--muted); border:2px solid transparent; }
     .theme-opt.sel { border-color: var(--gold-dark); color: var(--gold-dark); }
     #errlog { position: fixed; bottom: 0; left: 0; right: 0; background: #7f1d1d; color: #fff; font-size: 12px; padding: 8px; display: none; z-index: 9999; word-break: break-all; }
-  </style>
+      /* ======== ИНДИКАТОР "ПЕЧАТАЕТ..." ======== */
+    .typing-dots { display: inline-flex; gap: 4px; margin-right: 6px; align-items: center; }
+    .typing-dots .dot {
+      width: 6px; height: 6px; background: var(--muted); border-radius: 50%;
+      animation: typingBounce 1.2s infinite ease-in-out both;
+    }
+    .typing-dots .dot:nth-child(2) { animation-delay: 0.15s; }
+    .typing-dots .dot:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes typingBounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.45; }
+      40% { transform: translateY(-4px); opacity: 1; }
+    }
+    </style>
 </head>
 <body>
   <div id="errlog"></div>
@@ -203,6 +215,9 @@
         <div class="theme-opt" id="themeLight">⚪ Светлая</div>
         <div class="theme-opt" id="themeDark">⚫ Тёмная</div>
       </div>
+      <div class="settings-row">
+        <div class="theme-opt" id="btnClearChat" style="color:#b4543a;">🗑️ Очистить чат (для всех)</div>
+      </div>
       <button id="btnCloseSettings" style="width:100%; margin-top:8px; background:#e5dcc6; color:#6b5a13;">Закрыть</button>
     </div>
   </div>
@@ -210,7 +225,7 @@
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
     import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, sendPasswordResetEmail, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
-    import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit, doc, getDoc, setDoc, updateDoc, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+    import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, limit, doc, getDoc, getDocs, setDoc, updateDoc, writeBatch, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyDBUjvr3IIwxvJytFa6re924X0TReaSD-w",
@@ -259,6 +274,19 @@
       if (themeClicks >= 2) { themeClicks = 0; $('settingsModal').classList.remove('hidden'); }
     });
     $('btnCloseSettings').onclick = () => $('settingsModal').classList.add('hidden');
+
+    $('btnClearChat').onclick = async () => {
+      if (!confirm('Удалить ВСЕ сообщения чата? Это увидят все участники.')) return;
+      try {
+        const snap = await getDocs(query(collection(db, 'messages'), limit(500)));
+        const batch = writeBatch(db);
+        snap.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        $('settingsModal').classList.add('hidden');
+      } catch (e) {
+        alert('Ошибка очистки: ' + e.message);
+      }
+    };
 
     // ======== ЭМОДЗИ ========
     const EMOJIS = ['😀','😁','😂','🤣','😊','😍','🥰','😘','😎','🤩','😅','🙂','😉','😌','😢','😭','😡','🤯','🥳','😴','🤒','👍','👎','👌','✌️','🤝','🙏','👏','💪','🔥','❤️','🧡','💛','💚','💙','💜','🖤','✨','🎉','⭐','💫','🌙','☀️','🍕','☕','🎂','🎁','⚽','🏆'];
@@ -432,6 +460,13 @@
         });
         $('membersCount').textContent = String(list.length);
 
+        // кто сейчас печатает (кроме меня)
+        const nowMs = Date.now();
+        typingNames = list
+          .filter(u => u.id !== auth.currentUser?.uid && u.typing && u.typing.toMillis && nowMs - u.typing.toMillis() < 5000)
+          .map(u => u.name || 'Кто-то');
+        renderTyping();
+
         const box = $('membersList');
         box.innerHTML = '';
         list.forEach(u => {
@@ -493,6 +528,40 @@
 
     $('btnMembers').onclick = () => $('membersModal').classList.remove('hidden');
     $('btnCloseMembers').onclick = () => $('membersModal').classList.add('hidden');
+
+    // ======== ИНДИКАТОР "ПЕЧАТАЕТ..." ========
+    let typingNames = [];
+
+    function renderTyping() {
+      const box = $('messagesList');
+      if (!box) return;
+      const old = box.querySelector('.typing-row');
+      if (old) old.remove();
+      if (!typingNames.length) return;
+      const wasAtBottom = box.scrollHeight - box.scrollTop <= box.clientHeight + 60;
+      const row = document.createElement('div');
+      row.className = 'msg-row bot typing-row';
+      const av = document.createElement('div');
+      av.className = 'avatar';
+      av.style.background = 'var(--muted)';
+      av.textContent = '✍';
+      const div = document.createElement('div');
+      div.className = 'msg bot';
+      const dots = document.createElement('span');
+      dots.className = 'typing-dots';
+      dots.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+      const who = document.createElement('span');
+      who.className = 'who';
+      who.textContent = typingNames.length === 1
+        ? typingNames[0] + ' печатает…'
+        : typingNames.slice(0, 3).join(', ') + ' печатают…';
+      div.appendChild(dots);
+      div.appendChild(who);
+      row.appendChild(av);
+      row.appendChild(div);
+      box.appendChild(row);
+      if (wasAtBottom) box.scrollTop = box.scrollHeight;
+    }
 
     // ======== СООБЩЕНИЯ ========
     let unsubMessages = null;
@@ -563,6 +632,7 @@
             updateTitle();
           }
         });
+        renderTyping();
         if (wasAtBottom) {
           box.scrollTop = box.scrollHeight;
           $('btnToBottom').classList.add('hidden');
@@ -609,6 +679,7 @@
       const user = auth.currentUser;
       if (!user) return;
       input.value = '';
+      setDoc(doc(db, 'users', user.uid), { typing: null }, { merge: true }).catch(() => {});
       try {
         await addDoc(collection(db, 'messages'), {
           text: text,
@@ -626,6 +697,17 @@
 
     $('msgInput').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') $('btnSend').click();
+    });
+
+    // печатает пользователь или нет (не чаще раза в 2 секунды)
+    let lastTypingSent = 0;
+    $('msgInput').addEventListener('input', () => {
+      const now = Date.now();
+      if (now - lastTypingSent < 2000) return;
+      lastTypingSent = now;
+      const user = auth.currentUser;
+      if (!user) return;
+      setDoc(doc(db, 'users', user.uid), { typing: serverTimestamp() }, { merge: true }).catch(() => {});
     });
   </script>
 </body>
